@@ -1,0 +1,141 @@
+// BillBolt — Prisma schema
+// Mirrors RentAdmin's deployment pattern: Supabase Postgres, pooled
+// connection for runtime (port 6543, pgbouncer=true) and a direct
+// connection for migrations (port 5432).
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+// One row per business account. BillBolt is single-business per deployment
+// (like one RentAdmin instance per client) — the very first /api/auth/setup
+// call creates this row; every device after that just logs in against it.
+model User {
+  id           String   @id @default(cuid())
+  username     String   @unique
+  passwordHash String
+
+  // Business profile (was Settings in the old localStorage version)
+  businessName String?
+  email        String?
+  phone        String?
+  web          String?
+  addr         String?
+  taxRate      Float    @default(0)
+  terms        String   @default("Net 30")
+  dueDay       Int?
+  currency     String   @default("USD ($)")
+  prefix       String   @default("INV-")
+  payNotes     String?  @db.Text
+  logoData     String?  @db.Text
+  apiKey       String?  @db.Text
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  clients   Client[]
+  documents Document[]
+  pushSubscriptions PushSubscription[]
+}
+
+model Client {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name      String
+  email     String?
+  dueDay    Int?
+  invoices  Int      @default(0)
+  total     Float    @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  documents Document[]
+
+  @@unique([userId, name])
+  @@index([userId])
+}
+
+model Document {
+  id     String @id @default(cuid())
+  // Human-facing number, e.g. "INV-001" — what the app and the client see.
+  // Unique per business, not globally (two different BillBolt deployments
+  // can both have an "INV-001").
+  docNumber String
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  clientId String?
+  client   Client? @relation(fields: [clientId], references: [id], onDelete: SetNull)
+
+  clientName  String
+  clientEmail String?
+  clientAddr  String?
+
+  type   String // "invoice" | "quote"
+  status String // "draft" | "sent" | "partial" | "overdue" | "paid"
+
+  date String // ISO yyyy-mm-dd
+  due  String?
+
+  amount   Float
+  currency String?
+  tax      Float @default(0)
+  disc     Float @default(0)
+
+  notes String? @db.Text
+
+  // Snapshot of the business's "from" info at the moment this document was
+  // created, so old invoices don't change retroactively if settings change later.
+  fromName  String?
+  fromEmail String?
+  fromAddr  String?
+  fromPhone String?
+  fromWeb   String?
+
+  lineItems Json // [{id, desc, qty, price}]
+
+  payments Payment[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([userId, docNumber])
+  @@index([userId])
+  @@index([clientId])
+}
+
+model Payment {
+  id         String   @id @default(cuid())
+  documentId String
+  document   Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  date       String // ISO yyyy-mm-dd
+  amount     Float
+  method     String?
+  note       String?
+  createdAt  DateTime @default(now())
+
+  @@index([documentId])
+}
+
+// One row per device that opted in to due-date reminder notifications
+// (browser's Push subscription — the same device can re-subscribe if it
+// changes, since "endpoint" is unique and gets upserted).
+model PushSubscription {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  endpoint  String   @unique
+  p256dh    String
+  auth      String
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+}
