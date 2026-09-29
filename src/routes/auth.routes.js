@@ -4,17 +4,19 @@ const { hashPassword, verifyPassword, signToken, requireAuth } = require('../aut
 
 const router = express.Router();
 
-// GET /api/auth/status — does a business account already exist? Lets the
-// frontend decide whether to show "create login" or "log in".
+// GET /api/auth/status — kept for backward compatibility (older frontend
+// builds use it to pick a screen). Multi-tenant sign-up no longer depends
+// on this: any number of independent businesses can create an account.
 router.get('/status', async (req, res) => {
   const count = await prisma.user.count();
   res.json({ hasAccount: count > 0 });
 });
 
-// POST /api/auth/setup — creates the ONE business account. Only works once;
-// after that, use /login. This mirrors the old "first run" screen, but now
-// the account lives on the server so every device shares it.
-router.post('/setup', async (req, res) => {
+// POST /api/auth/signup — creates a new, independent business account.
+// Multi-tenant: this can be called any number of times — each call is a
+// different business, isolated from every other account's data by userId
+// throughout the API. Username just has to be unique.
+async function signupHandler(req, res) {
   const { username, password } = req.body || {};
   if (!username || !password) {
     return res.status(400).json({ error: 'Username and password are required.' });
@@ -22,17 +24,23 @@ router.post('/setup', async (req, res) => {
   if (password.length < 4) {
     return res.status(400).json({ error: 'Password should be at least 4 characters.' });
   }
-  const existingCount = await prisma.user.count();
-  if (existingCount > 0) {
-    return res.status(409).json({ error: 'An account already exists. Please log in instead.' });
-  }
   const passwordHash = await hashPassword(password);
-  const user = await prisma.user.create({
-    data: { username: username.trim(), passwordHash },
-  });
-  const token = signToken(user);
-  res.status(201).json({ token, username: user.username });
-});
+  try {
+    const user = await prisma.user.create({
+      data: { username: username.trim(), passwordHash },
+    });
+    const token = signToken(user);
+    res.status(201).json({ token, username: user.username });
+  } catch (err) {
+    if (err.code === 'P2002') {
+      return res.status(409).json({ error: 'That username is already taken. Try another, or log in instead.' });
+    }
+    throw err;
+  }
+}
+router.post('/signup', signupHandler);
+// Alias kept for backward compatibility with older frontend builds.
+router.post('/setup', signupHandler);
 
 // POST /api/auth/login
 router.post('/login', async (req, res) => {
