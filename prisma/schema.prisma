@@ -35,6 +35,11 @@ model User {
   payNotes     String?  @db.Text
   logoData     String?  @db.Text
   apiKey       String?  @db.Text
+  // Local hour (0–23, server clock is UTC) the daily due-date push check
+  // should fire for this account — lets each business pick their own time
+  // to be reminded to follow up with clients, instead of one fixed time
+  // for everyone.
+  reminderHour Int      @default(13)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -50,6 +55,7 @@ model Client {
   user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   name      String
   email     String?
+  phone     String?
   dueDay    Int?
   invoices  Int      @default(0)
   total     Float    @default(0)

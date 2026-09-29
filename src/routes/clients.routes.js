@@ -14,9 +14,9 @@ router.get('/', async (req, res) => {
   res.json(clients);
 });
 
-// PUT /api/clients/:id — rename / update email / recurring due day
+// PUT /api/clients/:id — rename / update email, phone / recurring due day
 router.put('/:id', async (req, res) => {
-  const { name, email, dueDay } = req.body || {};
+  const { name, email, phone, dueDay } = req.body || {};
   const existing = await prisma.client.findFirst({
     where: { id: req.params.id, userId: req.userId },
   });
@@ -30,6 +30,7 @@ router.put('/:id', async (req, res) => {
       data: {
         name: name.trim(),
         email: email ?? existing.email,
+        phone: phone ?? existing.phone,
         dueDay: dueDay === '' || dueDay === null || dueDay === undefined ? null : parseInt(dueDay, 10),
       },
     });

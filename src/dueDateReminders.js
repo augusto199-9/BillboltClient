@@ -24,17 +24,26 @@ function buildReminderBody(upcoming) {
 // reminder to every device that subscribed, for accounts that actually
 // have something due soon. Removes subscriptions the push service reports
 // as gone (uninstalled app, expired, etc).
-async function runDueDateReminders() {
+//
+// By default only processes accounts whose own chosen `reminderHour`
+// matches the current UTC hour — this function is meant to be called every
+// hour (see index.js), so each business gets exactly one check per day, at
+// the time THEY picked in Settings, not one fixed time for everyone. Pass
+// { ignoreHourFilter: true } to check every account regardless of hour
+// (used by the manual /api/push/run-daily-check trigger, for testing).
+async function runDueDateReminders(opts = {}) {
   if (!ensureConfigured()) {
     console.log('[reminders] Skipped — VAPID keys are not set.');
     return { sent: 0, skipped: true };
   }
 
+  const currentHour = new Date().getUTCHours();
   const users = await prisma.user.findMany({ include: { pushSubscriptions: true } });
   let sent = 0;
 
   for (const user of users) {
     if (!user.pushSubscriptions.length) continue;
+    if (!opts.ignoreHourFilter && (user.reminderHour ?? 13) !== currentHour) continue;
 
     const docs = await prisma.document.findMany({
       where: { userId: user.id },

@@ -1,4 +1,8 @@
 require('dotenv').config();
+// Express 4 doesn't catch errors thrown inside async route handlers, which
+// would crash the whole process (e.g. on a database hiccup). This patches it
+// so those errors reach the error handler below and return a normal 500.
+require('express-async-errors');
 const express = require('express');
 const cors = require('cors');
 const cron = require('node-cron');
@@ -36,16 +40,19 @@ app.use('/api/documents', documentsRoutes);
 app.use('/api/push', pushRoutes);
 
 // Lets an external scheduler (e.g. Render's Cron Job service, or any
-// uptime/cron pinger) trigger the daily reminder check over HTTP instead of
-// relying on this web service's own in-process timer — more reliable on
-// Render's free tier, where the service can spin down when idle and an
-// in-process cron simply won't fire while it's asleep.
+// uptime/cron pinger) trigger the reminder check over HTTP instead of (or
+// alongside) relying on this web service's own in-process timer — more
+// reliable on Render's free tier, where the service can spin down when idle
+// and an in-process cron simply won't fire while it's asleep.
+// Runs hourly and only actually notifies each business at the hour THEY
+// chose (Settings → Daily Reminder Hour). Add ?force=true to check every
+// account regardless of hour, e.g. while testing this by hand.
 app.post('/api/push/run-daily-check', async (req, res) => {
   const secret = req.headers['x-cron-secret'];
   if (!process.env.CRON_SECRET || secret !== process.env.CRON_SECRET) {
     return res.status(401).json({ error: 'Invalid or missing cron secret.' });
   }
-  const result = await runDueDateReminders();
+  const result = await runDueDateReminders({ ignoreHourFilter: req.query.force === 'true' });
   res.json(result);
 });
 
@@ -61,14 +68,17 @@ app.listen(PORT, () => {
   console.log(`BillBolt backend listening on port ${PORT}`);
 });
 
-// In-process daily reminder check — fine for an always-on plan, or as a
-// backup even on the free tier (it'll just also fire whenever the service
-// happens to be awake). REMINDER_CRON defaults to 13:00 UTC (~9am US
-// Eastern / 10am Argentina) — override with a standard cron expression.
+// In-process reminder check — runs every hour; runDueDateReminders() itself
+// only actually notifies each business at the local hour they picked in
+// Settings, so this still adds up to one notification per business per day.
+// Fine for an always-on plan, or as a backup even on the free tier (it'll
+// just also fire whenever the service happens to be awake).
+// REMINDER_CRON overrides how often this timer runs (standard cron syntax,
+// UTC) — the default is every hour, on the hour.
 if (process.env.ENABLE_IN_PROCESS_CRON !== 'false') {
-  const schedule = process.env.REMINDER_CRON || '0 13 * * *';
+  const schedule = process.env.REMINDER_CRON || '0 * * * *';
   cron.schedule(schedule, () => {
     runDueDateReminders().catch((err) => console.error('[reminders] Failed:', err));
   });
-  console.log(`[reminders] In-process daily check scheduled: "${schedule}" (UTC)`);
+  console.log(`[reminders] In-process check scheduled: "${schedule}" (UTC)`);
 }
