@@ -2,10 +2,18 @@
 // the single source of truth, so every device sees identical numbers.
 
 function docTotal(doc) {
-  if (doc.amount != null) return Math.max(0, doc.amount);
-  const sub = (doc.lineItems || []).reduce((s, i) => s + i.qty * i.price, 0);
-  const taxAmt = sub * ((doc.tax || 0) / 100);
-  return Math.max(0, sub + taxAmt - (doc.disc || 0));
+  const base = doc.amount != null
+    ? Math.max(0, doc.amount)
+    : (() => {
+        const sub = (doc.lineItems || []).reduce((s, i) => s + i.qty * i.price, 0);
+        const taxAmt = sub * ((doc.tax || 0) / 100);
+        return Math.max(0, sub + taxAmt - (doc.disc || 0));
+      })();
+  // Late fees / penalties / other charges added after the invoice was
+  // created — on top of the originally billed amount, which stays as-is
+  // for the record.
+  const charges = (doc.charges || []).reduce((s, c) => s + c.amount, 0);
+  return Math.max(0, base + charges);
 }
 
 function docPaid(doc) {

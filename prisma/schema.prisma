@@ -40,6 +40,10 @@ model User {
   // to be reminded to follow up with clients, instead of one fixed time
   // for everyone.
   reminderHour Int      @default(13)
+  // Pre-fills the "Note" field every time you open Record Payment, so you
+  // don't have to retype the same wording (e.g. "Paid via bank transfer")
+  // on every payment. Still editable per payment.
+  defaultPaymentNote String? @db.Text
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -109,6 +113,7 @@ model Document {
   lineItems Json // [{id, desc, qty, price}]
 
   payments Payment[]
+  charges  Charge[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -126,6 +131,22 @@ model Payment {
   amount     Float
   method     String?
   note       String?
+  createdAt  DateTime @default(now())
+
+  @@index([documentId])
+}
+
+// An extra amount added to an invoice AFTER it was created — late fee,
+// penalty, rush charge, etc. Kept separate from the original line items
+// (which stay as originally billed) so the invoice shows exactly what was
+// charged and when, instead of silently editing the original amount.
+model Charge {
+  id         String   @id @default(cuid())
+  documentId String
+  document   Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  date       String // ISO yyyy-mm-dd
+  amount     Float
+  reason     String?
   createdAt  DateTime @default(now())
 
   @@index([documentId])

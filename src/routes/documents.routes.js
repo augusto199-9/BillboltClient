@@ -33,13 +33,17 @@ function toDocShape(doc) {
       .slice()
       .sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : a.createdAt - b.createdAt))
       .map((p) => ({ id: p.id, date: p.date, amount: p.amount, method: p.method, note: p.note })),
+    charges: (doc.charges || [])
+      .slice()
+      .sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : a.createdAt - b.createdAt))
+      .map((c) => ({ id: c.id, date: c.date, amount: c.amount, reason: c.reason })),
   };
 }
 
 async function loadDoc(userId, docNumber) {
   return prisma.document.findFirst({
     where: { userId, docNumber },
-    include: { payments: true },
+    include: { payments: true, charges: true },
   });
 }
 
@@ -47,7 +51,7 @@ async function loadDoc(userId, docNumber) {
 router.get('/', async (req, res) => {
   const docs = await prisma.document.findMany({
     where: { userId: req.userId },
-    include: { payments: true },
+    include: { payments: true, charges: true },
     orderBy: { createdAt: 'desc' },
   });
   // Recompute status fresh on every read (not just right after a payment) so
@@ -206,6 +210,47 @@ router.delete('/:docNumber/payments/:paymentId', async (req, res) => {
   if (!payment) return res.status(404).json({ error: 'Payment not found.' });
 
   await prisma.payment.delete({ where: { id: payment.id } });
+  const docWithout = await loadDoc(req.userId, req.params.docNumber);
+  const newStatus = recalcStatus(docWithout);
+  await prisma.document.update({ where: { id: doc.id }, data: { status: newStatus } });
+
+  const fresh = await loadDoc(req.userId, req.params.docNumber);
+  res.json(toDocShape(fresh));
+});
+
+// POST /api/documents/:docNumber/charges — add an extra charge (late fee,
+// penalty, rush fee, etc.) on top of the original invoice amount.
+router.post('/:docNumber/charges', async (req, res) => {
+  const doc = await loadDoc(req.userId, req.params.docNumber);
+  if (!doc) return res.status(404).json({ error: 'Document not found.' });
+
+  const { amount, date, reason } = req.body || {};
+  const amt = parseFloat(amount);
+  if (!amt || amt <= 0) {
+    return res.status(400).json({ error: 'Enter a valid charge amount.' });
+  }
+  const chargeDate = date || new Date().toISOString().split('T')[0];
+
+  await prisma.charge.create({
+    data: { documentId: doc.id, date: chargeDate, amount: amt, reason: reason || null },
+  });
+
+  const docWithCharge = await loadDoc(req.userId, req.params.docNumber);
+  const newStatus = recalcStatus(docWithCharge);
+  await prisma.document.update({ where: { id: doc.id }, data: { status: newStatus } });
+
+  const fresh = await loadDoc(req.userId, req.params.docNumber);
+  res.status(201).json(toDocShape(fresh));
+});
+
+// DELETE /api/documents/:docNumber/charges/:chargeId
+router.delete('/:docNumber/charges/:chargeId', async (req, res) => {
+  const doc = await loadDoc(req.userId, req.params.docNumber);
+  if (!doc) return res.status(404).json({ error: 'Document not found.' });
+  const charge = doc.charges.find((c) => c.id === req.params.chargeId);
+  if (!charge) return res.status(404).json({ error: 'Charge not found.' });
+
+  await prisma.charge.delete({ where: { id: charge.id } });
   const docWithout = await loadDoc(req.userId, req.params.docNumber);
   const newStatus = recalcStatus(docWithout);
   await prisma.document.update({ where: { id: doc.id }, data: { status: newStatus } });

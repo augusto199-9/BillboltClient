@@ -21,6 +21,7 @@ function toSettingsShape(user) {
     apiKey: user.apiKey || '',
     logoData: user.logoData || '',
     reminderHour: user.reminderHour ?? 13,
+    defaultPaymentNote: user.defaultPaymentNote || '',
   };
 }
 
@@ -54,6 +55,7 @@ router.put('/', async (req, res) => {
       reminderHour: b.reminderHour === '' || b.reminderHour === null || b.reminderHour === undefined
         ? undefined
         : Math.min(23, Math.max(0, parseInt(b.reminderHour, 10))),
+      defaultPaymentNote: b.defaultPaymentNote ?? undefined,
     },
   });
   res.json(toSettingsShape(user));
