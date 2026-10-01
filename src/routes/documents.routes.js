@@ -230,6 +230,15 @@ router.post('/:docNumber/payments', async (req, res) => {
   const newStatus = recalcStatus(docWithPayment);
 
   const updateData = { status: newStatus };
+  // Learn the recurring monthly payment from the very first payment ever
+  // recorded on this invoice, if one wasn't already set explicitly — so a
+  // business doesn't have to separately type in "$200/month" by hand when
+  // the client is already paying exactly that. Once established (either
+  // way), later payments never silently overwrite it — a one-off partial
+  // or extra payment shouldn't change the standing monthly figure.
+  if (doc.monthlyPayment == null) {
+    updateData.monthlyPayment = amt;
+  }
   const client = doc.clientId ? await prisma.client.findUnique({ where: { id: doc.clientId } }) : null;
   const recurringDay = (client && client.dueDay) || null;
   if (recurringDay || (await prisma.user.findUnique({ where: { id: req.userId } })).dueDay) {
