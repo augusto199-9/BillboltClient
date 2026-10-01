@@ -94,6 +94,11 @@ model Document {
 
   date String // ISO yyyy-mm-dd
   due  String?
+  // Explicit expected monthly/recurring installment — set directly instead
+  // of being guessed from payment history, so it's there from day one, even
+  // before the first payment is recorded. Shown in Due Dates and used in
+  // reminder messages when set.
+  monthlyPayment Float?
 
   amount   Float
   currency String?

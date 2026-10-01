@@ -29,6 +29,7 @@ function toDocShape(doc) {
     fromPhone: doc.fromPhone,
     fromWeb: doc.fromWeb,
     lineItems: doc.lineItems,
+    monthlyPayment: doc.monthlyPayment,
     payments: (doc.payments || [])
       .slice()
       .sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : a.createdAt - b.createdAt))
@@ -123,6 +124,7 @@ router.post('/', async (req, res) => {
       fromPhone: b.fromPhone || null,
       fromWeb: b.fromWeb || null,
       lineItems: b.lineItems || [],
+      monthlyPayment: b.monthlyPayment != null && b.monthlyPayment !== '' ? parseFloat(b.monthlyPayment) : null,
     },
     include: { payments: true },
   });
@@ -171,6 +173,25 @@ router.put('/:docNumber/due', async (req, res) => {
   const shaped = toDocShape(fresh);
   shaped.status = recalcStatus(fresh);
   res.json(shaped);
+});
+
+// PUT /api/documents/:docNumber/monthly-payment — set/edit/clear the
+// explicit expected monthly payment (independent of payment history).
+router.put('/:docNumber/monthly-payment', async (req, res) => {
+  const doc = await prisma.document.findFirst({
+    where: { userId: req.userId, docNumber: req.params.docNumber },
+  });
+  if (!doc) return res.status(404).json({ error: 'Document not found.' });
+  const { monthlyPayment } = req.body || {};
+  const value = monthlyPayment === '' || monthlyPayment === null || monthlyPayment === undefined
+    ? null
+    : parseFloat(monthlyPayment);
+  if (value !== null && (!Number.isFinite(value) || value < 0)) {
+    return res.status(400).json({ error: 'Enter a valid amount, or leave it blank to clear it.' });
+  }
+  await prisma.document.update({ where: { id: doc.id }, data: { monthlyPayment: value } });
+  const fresh = await loadDoc(req.userId, req.params.docNumber);
+  res.json(toDocShape(fresh));
 });
 
 // DELETE /api/documents/:docNumber
