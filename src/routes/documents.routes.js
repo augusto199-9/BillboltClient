@@ -154,6 +154,25 @@ router.put('/:docNumber/status', async (req, res) => {
   res.json(toDocShape(fresh));
 });
 
+// PUT /api/documents/:docNumber/due — manually set the due date. Separate
+// from the automatic recurring roll-forward so a business can correct it
+// (e.g. a partial payment shouldn't always push the date a full cycle out).
+router.put('/:docNumber/due', async (req, res) => {
+  const doc = await prisma.document.findFirst({
+    where: { userId: req.userId, docNumber: req.params.docNumber },
+  });
+  if (!doc) return res.status(404).json({ error: 'Document not found.' });
+  const { due } = req.body || {};
+  if (!due || !/^\d{4}-\d{2}-\d{2}$/.test(due)) {
+    return res.status(400).json({ error: 'due must be a date in YYYY-MM-DD format.' });
+  }
+  await prisma.document.update({ where: { id: doc.id }, data: { due } });
+  const fresh = await loadDoc(req.userId, req.params.docNumber);
+  const shaped = toDocShape(fresh);
+  shaped.status = recalcStatus(fresh);
+  res.json(shaped);
+});
+
 // DELETE /api/documents/:docNumber
 router.delete('/:docNumber', async (req, res) => {
   const doc = await prisma.document.findFirst({
@@ -200,6 +219,45 @@ router.post('/:docNumber/payments', async (req, res) => {
 
   const fresh = await loadDoc(req.userId, req.params.docNumber);
   res.status(201).json(toDocShape(fresh));
+});
+
+// PUT /api/documents/:docNumber/payments/:paymentId — edit a previously
+// recorded payment (amount, date, method, note), e.g. to fix a mistake.
+router.put('/:docNumber/payments/:paymentId', async (req, res) => {
+  const doc = await loadDoc(req.userId, req.params.docNumber);
+  if (!doc) return res.status(404).json({ error: 'Document not found.' });
+  const payment = doc.payments.find((p) => p.id === req.params.paymentId);
+  if (!payment) return res.status(404).json({ error: 'Payment not found.' });
+
+  const { amount, date, method, note } = req.body || {};
+  const amt = parseFloat(amount);
+  if (!amt || amt <= 0) {
+    return res.status(400).json({ error: 'Enter a valid payment amount.' });
+  }
+  // Balance available to this payment = total - every OTHER payment (not
+  // counting the one being edited), so editing a payment up to the full
+  // remaining balance is allowed, same rule as recording a new one.
+  const totalExcludingThis = docTotal(doc) - doc.payments.filter((p) => p.id !== payment.id).reduce((s, p) => s + p.amount, 0);
+  if (amt > totalExcludingThis + 0.01) {
+    return res.status(400).json({ error: `Amount can't exceed the available balance ($${Math.max(0, totalExcludingThis).toFixed(2)}).` });
+  }
+
+  await prisma.payment.update({
+    where: { id: payment.id },
+    data: {
+      amount: amt,
+      date: date || payment.date,
+      method: method !== undefined ? method : payment.method,
+      note: note !== undefined ? note : payment.note,
+    },
+  });
+
+  const docWithEdit = await loadDoc(req.userId, req.params.docNumber);
+  const newStatus = recalcStatus(docWithEdit);
+  await prisma.document.update({ where: { id: doc.id }, data: { status: newStatus } });
+
+  const fresh = await loadDoc(req.userId, req.params.docNumber);
+  res.json(toDocShape(fresh));
 });
 
 // DELETE /api/documents/:docNumber/payments/:paymentId
