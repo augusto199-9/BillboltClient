@@ -194,6 +194,51 @@ router.put('/:docNumber/monthly-payment', async (req, res) => {
   res.json(toDocShape(fresh));
 });
 
+// PUT /api/documents/:docNumber/sync-business-info — re-stamps this one
+// invoice's business name/email/address/phone/website from the account's
+// CURRENT Settings. Invoices snapshot this info at creation time so old
+// invoices don't silently change on their own — this is the explicit,
+// one-invoice-at-a-time way to pull in an update made since (e.g. added a
+// phone number) onto an invoice that predates it.
+router.put('/:docNumber/sync-business-info', async (req, res) => {
+  const doc = await prisma.document.findFirst({
+    where: { userId: req.userId, docNumber: req.params.docNumber },
+  });
+  if (!doc) return res.status(404).json({ error: 'Document not found.' });
+  const user = await prisma.user.findUnique({ where: { id: req.userId } });
+  await prisma.document.update({
+    where: { id: doc.id },
+    data: {
+      fromName: user.businessName || null,
+      fromEmail: user.email || null,
+      fromAddr: user.addr || null,
+      fromPhone: user.phone || null,
+      fromWeb: user.web || null,
+    },
+  });
+  const fresh = await loadDoc(req.userId, req.params.docNumber);
+  res.json(toDocShape(fresh));
+});
+
+// POST /api/documents/sync-business-info-all — same re-stamp as above, but
+// for every invoice this account has, in one go. For catching up a backlog
+// of old invoices after a Settings change (e.g. just added a phone number),
+// instead of opening each one individually.
+router.post('/sync-business-info-all', async (req, res) => {
+  const user = await prisma.user.findUnique({ where: { id: req.userId } });
+  const result = await prisma.document.updateMany({
+    where: { userId: req.userId },
+    data: {
+      fromName: user.businessName || null,
+      fromEmail: user.email || null,
+      fromAddr: user.addr || null,
+      fromPhone: user.phone || null,
+      fromWeb: user.web || null,
+    },
+  });
+  res.json({ updated: result.count });
+});
+
 // DELETE /api/documents/:docNumber
 router.delete('/:docNumber', async (req, res) => {
   const doc = await prisma.document.findFirst({
