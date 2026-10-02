@@ -37,7 +37,6 @@ app.use('/api/auth', authRoutes);
 app.use('/api/settings', settingsRoutes);
 app.use('/api/clients', clientsRoutes);
 app.use('/api/documents', documentsRoutes);
-app.use('/api/push', pushRoutes);
 
 // Lets an external scheduler (e.g. Render's Cron Job service, or any
 // uptime/cron pinger) trigger the reminder check over HTTP instead of (or
@@ -47,6 +46,16 @@ app.use('/api/push', pushRoutes);
 // Runs hourly and only actually notifies each business at the hour THEY
 // chose (Settings → Daily Reminder Hour). Add ?force=true to check every
 // account regardless of hour, e.g. while testing this by hand.
+//
+// IMPORTANT: this must be registered BEFORE `app.use('/api/push', pushRoutes)`
+// below. pushRoutes applies `router.use(requireAuth)` to everything under
+// /api/push with no path restriction — if that router got first crack at
+// this request, it would reject it with a 401 before ever reaching this
+// handler (this is exactly what happened: the JWT auth middleware's own
+// error message, "Missing or invalid Authorization header", was masking
+// this route's actual cron-secret check). Express matches in registration
+// order, so defining this specific route first lets it handle the request
+// directly instead of falling through into the pushRoutes router.
 app.post('/api/push/run-daily-check', async (req, res) => {
   const secret = req.headers['x-cron-secret'];
   if (!process.env.CRON_SECRET || secret !== process.env.CRON_SECRET) {
@@ -55,6 +64,8 @@ app.post('/api/push/run-daily-check', async (req, res) => {
   const result = await runDueDateReminders({ ignoreHourFilter: req.query.force === 'true' });
   res.json(result);
 });
+
+app.use('/api/push', pushRoutes);
 
 // Centralized error handler — keeps Prisma/JS errors from leaking stack
 // traces to the client while still logging them server-side for debugging.
